@@ -1,0 +1,32 @@
+# General Settings
+data_dir: "/app/data" # Path *inside* the Docker container
+
+# Ollama Configuration
+ollama_base_url: "http://host.docker.internal:11434" # Default for Docker Desktop, adjust if needed
+# ollama_base_url: "http://localhost:11434" # If Ollama runs on the host *outside* Docker on Linux
+
+# Whisper Configuration
+whisper_model: "base.en" # Options: tiny.en, base.en, small.en, medium.en, large
+whisper_device: "cpu" # or "cuda" if GPU is available and configured in Docker
+
+# Tesseract Configuration
+tesseract_cmd: "tesseract" # Path to tesseract executable if not in PATH
+tesseract_lang: "eng" # Language pack(s) to use
+
+# LangChain RAG Configuration
+chunk_size: 1000
+chunk_overlap: 150
+embedding_model_name: "nomic-embed-text" # An example model name you have pulled in Ollama
+vector_store_path: "processed/vectorstore" # Relative to data_dir
+
+# Background Task Settings
+max_concurrent_jobs: 2 # Limit simultaneous heavy processing tasks
+
+# Summarization / Export
+tts_engine: "coqui_tts" # Placeholder - 'coqui_tts', 'bark', or 'none'
+tts_speaker_1: "tts_models/en/vctk/p225" # Example Coqui speaker ID
+tts_speaker_2: "tts_models/en/vctk/p226" # Example Coqui speaker ID
+summary_max_length: 500 # Tokens for text summary
+
+# Database
+database_url: "sqlite+aiosqlite:////app/data/db/app.db" # SQLite inside container

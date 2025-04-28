@@ -1,0 +1,67 @@
+version: '3.8'
+
+services:
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: notebooklm_backend
+    ports:
+      - "8000:8000" # Map host port 8000 to container port 8000
+    volumes:
+      - ./data:/app/data # Mount local data directory into the container
+      # Optional: Mount source code for development (reflects changes without rebuilding)
+      # - ./backend:/app
+    environment:
+      # Pass Ollama URL if it's running outside this compose file on the host
+      # For Docker Desktop (Windows/Mac):
+      - OLLAMA_BASE_URL=http://host.docker.internal:11434
+      # For Linux Host (if Ollama runs directly on host):
+      # - OLLAMA_BASE_URL=http://172.17.0.1:11434 # Find Docker bridge IP if needed
+      # Ensure this matches the setting in config.yaml or overrides it via config.py
+    # depends_on: # Add dependencies if running Ollama/DB in compose
+    #   - ollama # Example
+    restart: unless-stopped
+    command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"] # Use --reload for development if mounting code
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      # args: # Pass build args if needed for API URL during build
+      #   NEXT_PUBLIC_API_URL: http://backend:8000
+    container_name: notebooklm_frontend
+    ports:
+      - "3000:3000" # Map host port 3000 to container port 3000
+    depends_on:
+      - backend
+    restart: unless-stopped
+    environment:
+      # Runtime environment variable (if needed by Next.js entrypoint/server)
+      - NEXT_PUBLIC_API_URL=http://backend:8000 # Use service name 'backend'
+
+  # Optional: Add Ollama service if you want to run it in Docker as well
+  # ollama:
+  #   image: ollama/ollama:latest
+  #   container_name: ollama_service
+  #   ports:
+  #     - "11434:11434"
+  #   volumes:
+  #     - ollama_data:/root/.ollama # Persist models
+  #   # Add GPU support if needed (requires nvidia-container-toolkit on host)
+  #   # deploy:
+  #   #   resources:
+  #   #     reservations:
+  #   #       devices:
+  #   #         - driver: nvidia
+  #   #           count: 1 # or 'all'
+  #   #           capabilities: [gpu]
+  #   restart: unless-stopped
+
+volumes:
+  data: # Define the named volume used by the backend service
+  # ollama_data: # Define volume for Ollama models
+
+networks:
+  default:
+    driver: bridge

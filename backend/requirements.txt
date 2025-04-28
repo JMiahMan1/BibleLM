@@ -1,0 +1,39 @@
+fastapi==0.110.*
+uvicorn[standard]==0.29.*
+pydantic==2.6.*
+PyYAML==6.0.*
+python-dotenv==1.0.*
+
+# File Processing
+pypdf==4.1.*
+python-docx==1.1.*
+EbookLib==0.18.*
+pytesseract==0.3.*
+Pillow==10.2.* # Image handling for OCR
+
+# Audio/Video
+openai-whisper==20231117 # Or use faster-whisper if preferred
+yt-dlp==2023.12.*
+
+# LangChain & RAG
+langchain==0.1.*
+langchain-community==0.0.* # For Ollama, loaders, etc.
+langchain-text-splitters==0.0.*
+chromadb==0.4.* # Vector Store example (FAISS is another option)
+# faiss-cpu # or faiss-gpu if needed
+
+# Database
+SQLAlchemy==2.0.*
+alembic==1.13.* # For DB migrations (optional but good practice)
+aiosqlite==0.19.* # Async driver for SQLite
+
+# Background Tasks (using FastAPI's built-in for simplicity)
+# If using Celery, add:
+# celery==5.3.*
+# redis==5.0.*
+
+# Summarization/Export
+python-docx==1.1.* # For .docx export
+# TTS==0.22.* # Coqui TTS - Installation can be complex, requires espeak-ng
+# bark # If using Bark TTS
+# pydub # For audio manipulation if needed
