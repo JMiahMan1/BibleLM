@@ -4,10 +4,12 @@ import logging.config
 import os
 import shutil
 import uuid
+import httpx
+
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import FastAPI, File, UploadFile, BackgroundTasks, HTTPException, Depends, Request, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, File, UploadFile, BackgroundTasks, HTTPException, Depends, Request, WebSocket, WebSocketDisconnect, APIRouter
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, HTMLResponse
 
@@ -15,7 +17,15 @@ from . import crud, database, schemas, tasks
 from .config import settings
 from .dependencies import CurrentSettings, DBSession
 from .utils import file_processor, rag_handler
-from .database import DocumentStatus, DocumentType
+from .database import DocumentStatus, DocumentType, engine, Base
+
+from typing import AsyncGenerator
+from fastapi import FastAPI, Depends
+from sqlalchemy.ext.asyncio import AsyncSession
+from .database import AsyncSessionLocal, engine, Base
+from sqlalchemy import select
+from .models import Source, Chat, Audio
+from pydantic import BaseModel
 
 DATABASE_PATH = settings.full_data_dir / "db" / "app.db"
 DATABASE_URL = f"sqlite+aiosqlite:///{DATABASE_PATH}"
@@ -84,6 +94,61 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="Local NotebookLM Clone API", lifespan=lifespan)
 
+async def get_db() -> AsyncGenerator[AsyncSession, None]:
+    async with AsyncSessionLocal() as session:
+        yield session
+
+async def create_db_and_tables():
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+
+@app.on_event("startup")
+async def startup_event():
+    await create_db_and_tables()
+    global rag_handler
+    rag_handler = RagHandler()
+    await rag_handler.ainit()
+
+chat_router = APIRouter(prefix="/api", tags=["chat"])
+
+class ChatRequest(BaseModel):
+    question: str
+
+class ChatResponse(BaseModel):
+    answer: str
+
+@chat_router.post("/chat/")
+async def chat_with_ollama(chat_request: ChatRequest, session: AsyncSession = Depends(get_db)):
+    user_question = chat_request.question
+
+    if rag_handler is None:
+        raise HTTPException(status_code=503, detail="RAG system not initialized")
+
+    relevant_info = await rag_handler.query(user_question)
+
+    prompt = f"""Answer the following question based on the provided context:
+    Context: {relevant_info}
+    Question: {user_question}
+    Answer: """
+
+    try:
+        async with httpx.AsyncClient() as client:
+            ollama_url = "{settings.ollama.base_url}/api/generate"
+            response = await client.post(ollama_url, json={"prompt": prompt, "stream": False})
+            response.raise_for_status()
+            ollama_response_data = response.json()
+            ollama_answer = ollama_response_data.get("response", "")
+    except httpx.HTTPError as e:
+        raise HTTPException(status_code=500, detail=f"Error communicating with Ollama: {e}")
+    except ImportError:
+        raise HTTPException(status_code=500, detail="httpx library is required. Install it: pip install httpx")
+
+    new_chat = Chat(question=user_question, answer=ollama_answer)
+    session.add(new_chat)
+    await session.commit()
+    await session.refresh(new_chat)
+
+    return ChatResponse(answer=ollama_answer)
 
 async def broadcast_status(doc_id: int, status: str, error_message: str | None = None):
     if doc_id in websocket_connections:
@@ -200,46 +265,6 @@ async def get_task_status(doc_id: int, db: DBSession):
         error_message=db_doc.error_message
     )
 
-@app.post("/chat", response_model=schemas.ChatResponse)
-async def chat_with_documents(request: schemas.ChatRequest, db: DBSession):
-    logger.info(f"Received chat message: '{request.message[:50]}...' for docs: {request.document_ids}")
-    relevant_docs_db = []
-    if request.document_ids:
-        relevant_docs_db = await crud.get_completed_documents_by_ids(db, request.document_ids)
-        if len(relevant_docs_db) != len(request.document_ids):
-            found_ids = {doc.id for doc in relevant_docs_db}
-            missing_ids = set(request.document_ids) - found_ids
-            failed_or_pending = []
-            for missing_id in missing_ids:
-                doc = await crud.get_document(db, missing_id)
-                if not doc:
-                    failed_or_pending.append(f"ID {missing_id} (Not Found)")
-                elif doc.status != DocumentStatus.COMPLETED:
-                    failed_or_pending.append(f"ID {missing_id} (Status: {doc.status.name})")
-            logger.warning(f"Chat request included non-completed documents: {failed_or_pending}")
-            if not relevant_docs_db:
-                raise HTTPException(status_code=400, detail="None of the specified documents are ready for chat.")
-    try:
-        completed_doc_ids = [doc.id for doc in relevant_docs_db]
-        rag_result = await rag_handler.query_rag(request.message, completed_doc_ids)
-        answer = rag_result.get("result", "Sorry, I couldn't find an answer based on the provided documents.")
-        source_docs_info = []
-        source_doc_ids_used = set()
-        if rag_result.get("source_documents"):
-            for source_chunk in rag_result["source_documents"]:
-                metadata = source_chunk.metadata
-                source_doc_id = metadata.get("source_doc_id")
-                if source_doc_id:
-                    source_doc_ids_used.add(int(source_doc_id))
-        source_docs_response = [schemas.DocumentResponse.from_orm(doc) for doc in relevant_docs_db if doc.id in source_doc_ids_used]
-        return schemas.ChatResponse(response=answer, sources=source_docs_response)
-    except RuntimeError as e:
-        logger.error(f"RAG query failed during chat: {e}")
-        raise HTTPException(status_code=500, detail=f"Error during RAG processing: {e}")
-    except Exception as e:
-        logger.exception(f"Unexpected error during chat: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail="An internal server error occurred.")
-
 @app.post("/summary", response_model=schemas.SummaryResponse, status_code=202)
 async def generate_summary(
     request: schemas.SummaryRequest,
@@ -324,38 +349,22 @@ async def websocket_status_endpoint(websocket: WebSocket, doc_id: int, db: DBSes
             if not websocket_connections[doc_id]:
                 del websocket_connections[doc_id]
 
-@app.get("/BibleLMApp")  # Changed endpoint to /BibleLMApp
-async def serve_app():
-    """
-    Serves the BibleLMApp.js file by embedding it in a complete HTML page.
-    This ensures the browser correctly loads and executes the application.
-    """
-    js_path = os.path.join(os.path.dirname(__file__), "BibleLMApp.js")
-    if not os.path.exists(js_path):
-        raise HTTPException(status_code=404, detail="JavaScript file not found")
+@app.get("/api/sources/")
+async def get_sources(session: AsyncSession = Depends(get_db)):
+    result = await session.execute(select(Source))
+    sources = result.scalars().all()
+    return sources
 
-    #  Create a complete HTML page that loads the JavaScript file.
-    html_content = """
-    <!DOCTYPE html>
-    <html lang="en">
-    <head>
-        <meta charset="UTF-8">
-        <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <title>BibleLM App</title>
-    </head>
-    <body>
-        <div id="root">
-            </div>
-        <script src="/BibleLMApp.js"></script>
-    </body>
-    </html>
-    """
-    return HTMLResponse(html_content)
+@app.get("/api/chats/")
+async def get_chats(session: AsyncSession = Depends(get_db)):
+    result = await session.execute(select(Chat))
+    chats = result.scalars().all()
+    return chats
 
-#  serving the raw js file.  This is needed for the HTML to load the script.
-@app.get("/BibleLMApp.js")
-async def serve_js():
-    filepath = os.path.join(os.path.dirname(__file__), "BibleLMApp.js")
-    if not os.path.exists(filepath):
-        raise HTTPException(status_code=404, detail="JavaScript file not found")
-    return FileResponse(filepath, media_type="application/javascript")
+app.include_router(chat_router)
+
+@app.get("/api/studio/overview")
+async def get_audio_overview(session: AsyncSession = Depends(get_db)):
+    result = await session.execute(select(Audio))
+    audios = result.scalars().all()
+    return audios
