@@ -3,9 +3,10 @@ import logging
 from datetime import datetime
 import asyncio
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
-from sqlalchemy.orm import sessionmaker, declarative_base
-from sqlalchemy import Column, Integer, String, Enum, DateTime, Text
+from sqlalchemy.orm import declarative_base, sessionmaker, relationship
+from sqlalchemy import Column, Integer, String, Enum, DateTime, Text, ForeignKey
 from sqlalchemy.exc import OperationalError
+from sqlalchemy.sql import func
 
 from .config import settings
 
@@ -53,6 +54,16 @@ class DocumentType(enum.Enum):
     URL = "URL"
     UNKNOWN = "UNKNOWN"
 
+class ChatTable(Base):
+    __tablename__ = "chats"
+    id = Column(Integer, primary_key=True, index=True)
+    source_id = Column(Integer, ForeignKey("sources.id"), nullable=True)
+    question = Column(Text)
+    answer = Column(Text)
+    title = Column(String)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), onupdate=func.now())
+    source = relationship("Source", back_populates="chats")
 
 class Document(Base):
     __tablename__ = "documents"
@@ -67,12 +78,41 @@ class Document(Base):
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     error_message = Column(Text, nullable=True)
 
+class SourceTable(Base):
+    __tablename__ = "sources"
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String, unique=True, index=True)
+    description = Column(Text)
+    chats = relationship("Chat", back_populates="source")
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), onupdate=func.now())
+
+class AudioNoteTable(Base):
+    __tablename__ = "audio_notes"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    generated_note = Column(Text, index=True)
+    tool_used = Column(String)
+
+class AudioFileTable(Base):
+    __tablename__ = "audio_files"
+
+    id = Column(Integer, primary_key=True, index=True)
+    audio_title = Column(String)
+    file_path = Column(String)
+    duration = Column(Integer)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), onupdate=func.now())
 
 async def init_db():
+    """
+    Initialize the database: create tables.
+    """
     try:
         async with engine.begin() as conn:
-            # await conn.run_sync(Base.metadata.drop_all)  # Use cautiously for development
-            await conn.run_sync(Base.metadata.create_all)
+            await conn.run_sync(
+                Base.metadata.create_all
+            )  # Corrected: create_all, not drop_all
         logger.info("Database tables created successfully.")
     except OperationalError as e:
         logger.error(f"OperationalError during database initialization: {e}")
@@ -80,7 +120,6 @@ async def init_db():
     except Exception as e:
         logger.error(f"Error initializing database: {e}")
         raise  # Re-raise to stop startup
-
 
 # Dependency to get DB session in routes
 async def get_db():
