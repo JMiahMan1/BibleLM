@@ -6,6 +6,7 @@ from langchain_community.llms import Ollama
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain.chains import RetrievalQA
 from langchain.docstore.document import Document as LangchainDocument # Avoid name clash
+import asyncio
 
 from ..config import settings
 
@@ -24,7 +25,7 @@ def get_embeddings():
 
 def get_vector_store(persist_directory: str | None = None) -> Chroma:
     """Initializes or loads the Chroma vector store."""
-    persist_dir = persist_directory or settings.full_vector_store_path
+    persist_dir = persist_directory or str(settings.full_vector_store_path)
     logger.info(f"Accessing ChromaDB vector store at: {persist_dir}")
     embeddings = get_embeddings()
     # Note: collection_name can be customized if needed
@@ -72,7 +73,7 @@ def add_text_to_vector_store(text: str, metadata: dict, doc_id: int):
 
     try:
         vector_store = get_vector_store()
-        vector_store.add_documents(docs, metadatas=doc_metadatas, ids=[f"{doc_id}_{i}" for i in range(len(docs))])
+        vector_store.add_documents(docs, ids=[f"{doc_id}_{i}" for i in range(len(docs))])
         # Persist changes explicitly (important for Chroma)
         vector_store.persist()
         logger.info(f"Successfully added {len(docs)} chunks for document ID {doc_id} to vector store.")

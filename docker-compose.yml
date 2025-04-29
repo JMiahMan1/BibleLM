@@ -5,7 +5,7 @@ services:
     build:
       context: ./backend
       dockerfile: Dockerfile
-    container_name: notebooklm_backend
+    container_name: biblelm-backend
     ports:
       - "8000:8000" # Map host port 8000 to container port 8000
     volumes:
@@ -21,25 +21,37 @@ services:
       # Ensure this matches the setting in config.yaml or overrides it via config.py
     # depends_on: # Add dependencies if running Ollama/DB in compose
     #   - ollama # Example
+    networks:
+      - biblelm_network
     restart: unless-stopped
     command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"] # Use --reload for development if mounting code
 
+
   frontend:
     build:
-      context: ./frontend
-      dockerfile: Dockerfile
-      # args: # Pass build args if needed for API URL during build
-      #   NEXT_PUBLIC_API_URL: http://backend:8000
-    container_name: notebooklm_frontend
+      context: . # Build using the Dockerfile in the current directory (where this compose file is)
+      dockerfile: Dockerfile # Explicitly state the Dockerfile name
+    container_name: biblelm-frontend
     ports:
-      - "3000:3000" # Map host port 3000 to container port 3000
+      - "8080:80" # Map host port 8080 to container port 80 (Apache)
+    volumes:
+      # Mount frontend code for development (optional)
+      # Note: Changes to PHP might require restart depending on setup
+      - ./index.php:/var/www/html/index.php
+      - ./style.css:/var/www/html/style.css
+      - ./includes:/var/www/html/includes
+      - ./js:/var/www/html/js
+      - ./assets:/var/www/html/assets
     depends_on:
-      - backend
-    restart: unless-stopped
+      - backend # Ensure backend starts before frontend (useful but not strictly required for API calls)
     environment:
-      # Runtime environment variable (if needed by Next.js entrypoint/server)
-      - NEXT_PUBLIC_API_URL=http://backend:8000 # Use service name 'backend'
-
+      # Pass the backend URL to the PHP container
+      # 'backend' is the service name defined above, Docker Compose handles DNS resolution
+      - BACKEND_API_URL=http://backend:8000
+    networks:
+      - biblelm_network
+    restart: unless-stopped
+  
   # Optional: Add Ollama service if you want to run it in Docker as well
   # ollama:
   #   image: ollama/ollama:latest

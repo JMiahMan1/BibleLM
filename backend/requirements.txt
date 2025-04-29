@@ -1,7 +1,7 @@
-fastapi==0.110.*
-uvicorn[standard]==0.29.*
-pydantic==2.6.*
-PyYAML==6.0.*
+fastapi
+uvicorn[standard]
+pydantic
+PyYAML
 python-dotenv==1.0.*
 
 # File Processing
@@ -9,11 +9,11 @@ pypdf==4.1.*
 python-docx==1.1.*
 EbookLib==0.18.*
 pytesseract==0.3.*
-Pillow==10.2.* # Image handling for OCR
+Pillow # Image handling for OCR
 
 # Audio/Video
-openai-whisper==20231117 # Or use faster-whisper if preferred
-yt-dlp==2023.12.*
+faster-whisper # Or use faster-whisper if preferred
+yt-dlp
 
 # LangChain & RAG
 langchain==0.1.*
@@ -25,7 +25,7 @@ chromadb==0.4.* # Vector Store example (FAISS is another option)
 # Database
 SQLAlchemy==2.0.*
 alembic==1.13.* # For DB migrations (optional but good practice)
-aiosqlite==0.19.* # Async driver for SQLite
+aiosqlite # Async driver for SQLite
 
 # Background Tasks (using FastAPI's built-in for simplicity)
 # If using Celery, add:

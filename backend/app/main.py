@@ -9,13 +9,16 @@ from pathlib import Path
 
 from fastapi import FastAPI, File, UploadFile, BackgroundTasks, HTTPException, Depends, Request, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, HTMLResponse
 
 from . import crud, database, schemas, tasks
 from .config import settings
 from .dependencies import CurrentSettings, DBSession
 from .utils import file_processor, rag_handler
 from .database import DocumentStatus, DocumentType
+
+DATABASE_PATH = settings.full_data_dir / "db" / "app.db"
+DATABASE_URL = f"sqlite+aiosqlite:///{DATABASE_PATH}"
 
 # --- Logging Setup ---
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
@@ -52,8 +55,16 @@ async def lifespan(app: FastAPI):
     logger.info(f"Data directory: {settings.full_data_dir}")
     logger.info(f"Ollama URL: {settings.ollama.base_url}")
     logger.info(f"Vector store path: {settings.full_vector_store_path}")
-    await database.init_db()
-    logger.info("Database initialized.")
+    logger.info(f"Database path: {DATABASE_PATH}")
+    try:
+        await database.init_db()
+        logger.info("Database initialized.")
+    except Exception as e:
+        logger.error(f"Error during database initialization in lifespan: {e}")
+        # Consider raising the exception here to prevent the app from starting
+        # if the database fails to initialize.
+        # raise
+
     try:
         llm = rag_handler.get_llm()
         logger.info("Successfully connected to Ollama.")
@@ -312,3 +323,39 @@ async def websocket_status_endpoint(websocket: WebSocket, doc_id: int, db: DBSes
             websocket_connections[doc_id].remove(websocket)
             if not websocket_connections[doc_id]:
                 del websocket_connections[doc_id]
+
+@app.get("/BibleLMApp")  # Changed endpoint to /BibleLMApp
+async def serve_app():
+    """
+    Serves the BibleLMApp.js file by embedding it in a complete HTML page.
+    This ensures the browser correctly loads and executes the application.
+    """
+    js_path = os.path.join(os.path.dirname(__file__), "BibleLMApp.js")
+    if not os.path.exists(js_path):
+        raise HTTPException(status_code=404, detail="JavaScript file not found")
+
+    #  Create a complete HTML page that loads the JavaScript file.
+    html_content = """
+    <!DOCTYPE html>
+    <html lang="en">
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>BibleLM App</title>
+    </head>
+    <body>
+        <div id="root">
+            </div>
+        <script src="/BibleLMApp.js"></script>
+    </body>
+    </html>
+    """
+    return HTMLResponse(html_content)
+
+#  serving the raw js file.  This is needed for the HTML to load the script.
+@app.get("/BibleLMApp.js")
+async def serve_js():
+    filepath = os.path.join(os.path.dirname(__file__), "BibleLMApp.js")
+    if not os.path.exists(filepath):
+        raise HTTPException(status_code=404, detail="JavaScript file not found")
+    return FileResponse(filepath, media_type="application/javascript")

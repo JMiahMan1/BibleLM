@@ -1,0 +1,557 @@
+/* --- Reset & Base --- */
+:root {
+    --primary-color: #4F46E5; /* Indigo */
+    --secondary-color: #6B7280; /* Gray */
+    --background-color: #F9FAFB; /* Very light gray */
+    --surface-color: #FFFFFF; /* White */
+    --border-color: #E5E7EB; /* Light gray */
+    --text-color-primary: #1F2937; /* Dark gray */
+    --text-color-secondary: #4B5563; /* Medium gray */
+    --text-color-light: #FFFFFF;
+    --danger-color: #EF4444; /* Red */
+    --font-family: 'Inter', sans-serif;
+    --border-radius: 0.5rem; /* 8px */
+    --spacing-unit: 0.5rem; /* 8px */
+}
+
+* {
+    box-sizing: border-box;
+    margin: 0;
+    padding: 0;
+}
+
+html, body {
+    height: 100%;
+    font-family: var(--font-family);
+    background-color: var(--background-color);
+    color: var(--text-color-primary);
+    font-size: 16px; /* Base font size */
+    line-height: 1.5;
+}
+
+body {
+    display: flex;
+    flex-direction: column;
+}
+
+h1, h2, h3, h4, h5, h6 {
+    font-weight: 600; /* Semibold */
+    margin-bottom: calc(var(--spacing-unit) * 2);
+}
+
+h1 { font-size: 1.5rem; } /* 24px */
+h2 { font-size: 1.25rem; } /* 20px */
+h3 { font-size: 1.125rem; } /* 18px */
+h4 { font-size: 1rem; } /* 16px */
+
+a {
+    color: var(--primary-color);
+    text-decoration: none;
+}
+a:hover {
+    text-decoration: underline;
+}
+
+/* --- Layout --- */
+.app-container {
+    display: flex;
+    flex-direction: column;
+    height: 100vh; /* Full viewport height */
+    overflow: hidden; /* Prevent body scroll */
+}
+
+.app-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: var(--spacing-unit) calc(var(--spacing-unit) * 3);
+    background-color: var(--surface-color);
+    border-bottom: 1px solid var(--border-color);
+    flex-shrink: 0; /* Prevent header from shrinking */
+}
+
+.header-title {
+    display: flex;
+    align-items: center;
+    gap: var(--spacing-unit);
+}
+
+.header-actions {
+    display: flex;
+    align-items: center;
+    gap: calc(var(--spacing-unit) * 2);
+}
+
+.avatar {
+    width: 32px;
+    height: 32px;
+    border-radius: 50%;
+    object-fit: cover;
+    border: 1px solid var(--border-color);
+}
+
+.main-container {
+    display: flex;
+    flex-grow: 1; /* Take remaining vertical space */
+    overflow: hidden; /* Prevent container scroll, manage internally */
+}
+
+.sidebar {
+    width: 280px; /* Fixed width for sidebars on desktop */
+    flex-shrink: 0;
+    background-color: var(--surface-color);
+    border-right: 1px solid var(--border-color);
+    display: flex;
+    flex-direction: column;
+    padding: calc(var(--spacing-unit) * 2);
+    overflow: hidden; /* Hide overflow, use internal scroll */
+}
+
+.sidebar-right {
+    border-right: none;
+    border-left: 1px solid var(--border-color);
+}
+
+.sidebar-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: calc(var(--spacing-unit) * 2);
+    padding-bottom: calc(var(--spacing-unit) * 2);
+    border-bottom: 1px solid var(--border-color);
+}
+
+.sidebar-header h2 {
+    margin-bottom: 0;
+}
+
+.sidebar-actions {
+    display: flex;
+    gap: var(--spacing-unit);
+}
+
+.content-center {
+    flex-grow: 1; /* Take remaining horizontal space */
+    display: flex;
+    flex-direction: column;
+    background-color: var(--background-color);
+    overflow: hidden; /* Manage scrolling internally */
+}
+
+.scrollable {
+    overflow-y: auto; /* Enable vertical scroll */
+    flex-grow: 1; /* Allow content to take space and scroll */
+    padding-right: var(--spacing-unit); /* Space for scrollbar */
+}
+
+/* --- Components --- */
+
+/* Buttons */
+.button {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: calc(var(--spacing-unit) * 1.5) calc(var(--spacing-unit) * 3);
+    border: 1px solid transparent;
+    border-radius: var(--border-radius);
+    font-weight: 500;
+    font-size: 0.875rem; /* 14px */
+    cursor: pointer;
+    transition: background-color 0.2s ease, border-color 0.2s ease, color 0.2s ease;
+    white-space: nowrap;
+}
+.button:focus-visible {
+     outline: 2px solid var(--primary-color);
+     outline-offset: 2px;
+}
+
+.button-primary {
+    background-color: var(--primary-color);
+    color: var(--text-color-light);
+    border-color: var(--primary-color);
+}
+.button-primary:hover {
+    background-color: #4338CA; /* Darker Indigo */
+    border-color: #4338CA;
+}
+
+.button-secondary {
+    background-color: var(--surface-color);
+    color: var(--text-color-secondary);
+    border-color: var(--border-color);
+}
+.button-secondary:hover {
+    background-color: #F3F4F6; /* Lighter gray */
+    border-color: #D1D5DB;
+}
+
+.button-outline {
+    background-color: transparent;
+    color: var(--text-color-secondary);
+    border: 1px solid var(--border-color);
+}
+.button-outline:hover {
+    background-color: #F9FAFB; /* Very light gray */
+    border-color: #D1D5DB;
+    color: var(--text-color-primary);
+}
+
+.button-link {
+     background: none;
+     border: none;
+     color: var(--primary-color);
+     padding: calc(var(--spacing-unit) * 0.5) 0; /* Minimal padding */
+     font-weight: 500;
+     text-align: left;
+     cursor: pointer;
+}
+.button-link:hover {
+    text-decoration: underline;
+}
+
+
+.button-small {
+    padding: var(--spacing-unit) calc(var(--spacing-unit) * 2);
+    font-size: 0.75rem; /* 12px */
+}
+
+.icon-button {
+    background: none;
+    border: none;
+    padding: calc(var(--spacing-unit) * 0.5);
+    color: var(--text-color-secondary);
+    cursor: pointer;
+    border-radius: 50%;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 32px;
+    height: 32px;
+}
+.icon-button:hover {
+    background-color: #F3F4F6; /* Light gray background on hover */
+    color: var(--text-color-primary);
+}
+.icon-button:focus-visible {
+     outline: 2px solid var(--primary-color);
+     outline-offset: 1px;
+}
+.icon-button svg {
+    width: 18px; /* Adjust icon size */
+    height: 18px;
+}
+
+/* Source List */
+.source-controls {
+    padding: var(--spacing-unit) 0;
+    margin-bottom: var(--spacing-unit);
+}
+.source-list {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+    flex-grow: 1; /* Take available space */
+}
+.source-list li {
+    display: flex;
+    align-items: center;
+    padding: var(--spacing-unit) calc(var(--spacing-unit) * 1.5);
+    margin-bottom: calc(var(--spacing-unit) * 0.5);
+    border-radius: var(--border-radius);
+    cursor: pointer;
+    transition: background-color 0.15s ease;
+    gap: var(--spacing-unit);
+}
+.source-list li:hover, .source-list li:focus, .source-list li.active {
+    background-color: #F3F4F6; /* Light gray background */
+}
+.source-list li:focus {
+    outline: none; /* Use background color for focus */
+}
+.source-icon {
+    width: 16px;
+    height: 16px;
+    flex-shrink: 0;
+    opacity: 0.7;
+}
+.source-title {
+    flex-grow: 1;
+    font-size: 0.875rem; /* 14px */
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.source-checkbox {
+    margin-left: auto; /* Push checkbox to the right */
+    flex-shrink: 0;
+}
+
+/* Checkbox */
+.checkbox-label {
+    display: inline-flex;
+    align-items: center;
+    cursor: pointer;
+    font-size: 0.875rem;
+    color: var(--text-color-secondary);
+}
+.checkbox-label input[type="checkbox"] {
+    margin-right: var(--spacing-unit);
+    accent-color: var(--primary-color); /* Style the checkmark color */
+}
+
+
+/* Chat Area */
+.chat-header {
+    display: flex;
+    align-items: center;
+    gap: var(--spacing-unit);
+    padding: calc(var(--spacing-unit) * 2) calc(var(--spacing-unit) * 3);
+    border-bottom: 1px solid var(--border-color);
+    background-color: var(--surface-color);
+    flex-shrink: 0;
+}
+.chat-header h2 {
+    margin-bottom: 0;
+    font-size: 1.125rem; /* 18px */
+}
+.chat-topic-icon {
+    width: 24px;
+    height: 24px;
+}
+.source-count {
+    font-size: 0.875rem;
+    color: var(--text-color-secondary);
+    margin-left: auto;
+}
+
+.chat-body {
+    padding: calc(var(--spacing-unit) * 3);
+    flex-grow: 1;
+    overflow-y: auto; /* Enable scroll for messages */
+}
+.chat-message {
+    margin-bottom: calc(var(--spacing-unit) * 2);
+    padding: var(--spacing-unit) calc(var(--spacing-unit) * 2);
+    border-radius: var(--border-radius);
+    max-width: 80%; /* Limit message width */
+    word-wrap: break-word; /* Break long words */
+}
+.user-message {
+    background-color: var(--surface-color);
+    border: 1px solid var(--border-color);
+    margin-left: auto; /* Align user messages to the right */
+    text-align: left; /* Keep text left-aligned within the bubble */
+}
+.assistant-message {
+    background-color: #EEF2FF; /* Light Indigo */
+    border: 1px solid #C7D2FE; /* Lighter Indigo border */
+    margin-right: auto; /* Align assistant messages to the left */
+}
+
+.chat-actions {
+    padding: var(--spacing-unit) calc(var(--spacing-unit) * 3);
+    border-top: 1px solid var(--border-color);
+    display: flex;
+    gap: var(--spacing-unit);
+    background-color: var(--surface-color);
+    flex-shrink: 0;
+}
+
+.chat-input-area {
+    display: flex;
+    align-items: flex-end; /* Align items to bottom */
+    padding: var(--spacing-unit) calc(var(--spacing-unit) * 3);
+    padding-top: calc(var(--spacing-unit) * 1.5);
+    border-top: 1px solid var(--border-color);
+    background-color: var(--surface-color);
+    flex-shrink: 0;
+}
+.chat-input-area textarea {
+    flex-grow: 1;
+    padding: calc(var(--spacing-unit) * 1.5);
+    border: 1px solid var(--border-color);
+    border-radius: var(--border-radius);
+    font-family: var(--font-family);
+    font-size: 1rem;
+    line-height: 1.4;
+    resize: none; /* Disable manual resize */
+    min-height: 44px; /* Minimum height for one line + padding */
+    max-height: 150px; /* Limit excessive growth */
+    overflow-y: auto; /* Allow scroll if needed */
+    margin-right: var(--spacing-unit);
+}
+.chat-input-area textarea:focus {
+    outline: none;
+    border-color: var(--primary-color);
+    box-shadow: 0 0 0 1px var(--primary-color);
+}
+.chat-input-area .button {
+    height: 44px; /* Match textarea initial height */
+    flex-shrink: 0;
+}
+
+
+/* Studio Area */
+.studio-content {
+    padding: calc(var(--spacing-unit) * 2);
+    padding-right: 0; /* Remove padding for scrollbar */
+    flex-grow: 1;
+    overflow-y: auto;
+}
+
+.studio-section {
+    margin-bottom: calc(var(--spacing-unit) * 4);
+}
+.studio-section h3 {
+    font-size: 1rem; /* 16px */
+    font-weight: 500; /* Medium */
+    color: var(--text-color-secondary);
+    margin-bottom: calc(var(--spacing-unit) * 1.5);
+}
+.studio-section .section-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: calc(var(--spacing-unit) * 1.5);
+}
+.studio-section .section-header h3 {
+    margin-bottom: 0;
+}
+
+.studio-item {
+    background-color: var(--surface-color);
+    border: 1px solid var(--border-color);
+    border-radius: var(--border-radius);
+    padding: calc(var(--spacing-unit) * 2);
+    margin-bottom: var(--spacing-unit);
+}
+.studio-item h4 {
+    font-size: 0.875rem; /* 14px */
+    font-weight: 600;
+    margin-bottom: calc(var(--spacing-unit) * 0.5);
+}
+.studio-item p {
+    font-size: 0.875rem;
+    color: var(--text-color-secondary);
+    margin-bottom: calc(var(--spacing-unit) * 1.5);
+}
+.studio-item-actions {
+    display: flex;
+    gap: var(--spacing-unit);
+}
+
+.notes-area {
+    /* Add styling for notes display */
+    min-height: 100px; /* Example */
+}
+
+.quick-links {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start; /* Align links to the left */
+    gap: calc(var(--spacing-unit) * 0.5);
+}
+
+.placeholder, .empty-list-message {
+    color: var(--text-color-secondary);
+    font-size: 0.875rem;
+    text-align: center;
+    padding: calc(var(--spacing-unit) * 2);
+}
+.centered-message {
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
+    height: 100%;
+    text-align: center;
+    padding: calc(var(--spacing-unit) * 4);
+}
+
+
+/* --- Responsive Design --- */
+
+/* Smaller screens (Tablets / Small Laptops) */
+@media (max-width: 1024px) {
+    .sidebar {
+        width: 240px; /* Slightly narrower sidebars */
+    }
+    .app-header, .chat-header, .chat-actions, .chat-input-area {
+        padding-left: calc(var(--spacing-unit) * 2);
+        padding-right: calc(var(--spacing-unit) * 2);
+    }
+     .chat-body {
+        padding: calc(var(--spacing-unit) * 2);
+    }
+}
+
+
+/* Mobile screens */
+@media (max-width: 768px) {
+    .app-container {
+        height: auto; /* Allow content to determine height */
+        min-height: 100vh;
+    }
+
+    .main-container {
+        flex-direction: column; /* Stack panels vertically */
+    }
+
+    .sidebar {
+        width: 100%; /* Full width */
+        max-height: 30vh; /* Limit height, make scrollable */
+        border-right: none;
+        border-bottom: 1px solid var(--border-color);
+        padding: var(--spacing-unit);
+    }
+    .sidebar-right {
+        border-left: none;
+        border-top: 1px solid var(--border-color);
+         max-height: 40vh; /* Allow slightly more space */
+    }
+    .sidebar-header {
+        padding-bottom: var(--spacing-unit);
+    }
+    .scrollable {
+         padding-right: 0; /* No extra padding needed */
+    }
+
+
+    .content-center {
+         /* Take remaining space, but ensure it's scrollable if needed */
+         min-height: 50vh; /* Ensure chat has decent height */
+    }
+
+    .app-header {
+        padding: var(--spacing-unit) calc(var(--spacing-unit) * 1.5);
+    }
+    .header-actions .icon-button {
+        width: 28px;
+        height: 28px;
+    }
+     .header-actions .avatar {
+        width: 28px;
+        height: 28px;
+    }
+    h1 { font-size: 1.25rem; }
+
+
+    .chat-header, .chat-actions, .chat-input-area {
+        padding-left: var(--spacing-unit);
+        padding-right: var(--spacing-unit);
+    }
+     .chat-body {
+        padding: var(--spacing-unit);
+    }
+    .chat-message {
+        max-width: 90%;
+    }
+    .chat-input-area textarea {
+        font-size: 0.9rem;
+    }
+
+    /* Optionally hide one sidebar on mobile or use tabs/drawers */
+    /* Example: Hide Studio by default on mobile */
+    /* .sidebar-right { display: none; } */
+    /* You'd need JS to toggle its visibility */
+}
