@@ -1,135 +1,161 @@
+# app/utils/summarizer.py
 import logging
-from pathlib import Path
-from langchain_community.llms import Ollama
-from langchain.chains.summarize import load_summarize_chain
-from langchain.docstore.document import Document as LangchainDocument
-from docx import Document as WordDocument # For .docx export
+from typing import List, Dict, Any
+from pathlib import Path # Import Path
 
+# Import Document model from models.py
+from ..models import Document # Import your DB model
+# Import settings for configuration (e.g., LLM URL, summary length)
 from ..config import settings
-from ..database import Document as DBDocument # Import your DB model
-
-# Placeholder for actual TTS implementation
-# from TTS.api import TTS # Example using Coqui TTS
-# import soundfile as sf
+# Import httpx for making asynchronous HTTP requests
+import httpx
 
 logger = logging.getLogger(__name__)
 
-def get_llm():
-    """Initializes the Ollama LLM for summarization."""
-    return Ollama(base_url=settings.ollama.base_url)
+# --- LLM Initialization (using Ollama) ---
+# This is similar to the RAG handler, can potentially share initialization
+def get_llm_url() -> str:
+    """Gets the base URL for the LLM (Ollama)."""
+    # Ensure this matches the setting in your config.yaml/config.py
+    return settings.ollama.base_url
 
-async def generate_text_summary(docs: list[LangchainDocument]) -> str:
-    """Generates a text summary using LangChain and Ollama."""
-    if not docs:
-        return "No content provided for summarization."
+# --- Summarization Function ---
 
-    llm = get_llm()
-    # Use map_reduce for potentially long documents
-    chain = load_summarize_chain(llm, chain_type="map_reduce")
-
-    logger.info(f"Generating text summary for {len(docs)} document chunks.")
-    try:
-        # Run sync LangChain call in executor
-        loop = asyncio.get_running_loop()
-        summary = await loop.run_in_executor(None, chain.run, docs)
-        # summary = chain.run(docs) # Sync version
-        logger.info("Text summary generated successfully.")
-        return summary
-    except Exception as e:
-        logger.error(f"Failed to generate text summary: {e}")
-        raise RuntimeError("Summary generation failed.") from e
-
-def create_script(summary_text: str) -> str:
-    """Formats summary text into a simple two-speaker dialogue script."""
-    logger.info("Formatting summary into a dialogue script.")
-    # Basic alternating speaker format
-    sentences = [s.strip() for s in summary_text.split('.') if s.strip()]
-    script = ""
-    speakers = ["Speaker A", "Speaker B"]
-    for i, sentence in enumerate(sentences):
-        speaker = speakers[i % 2]
-        script += f"{speaker}: {sentence}.\n\n"
-    return script
-
-def save_summary_docx(summary_text: str, output_path: Path):
-    """Saves the summary text as a .docx file."""
-    logger.info(f"Saving summary to DOCX: {output_path}")
-    try:
-        document = WordDocument()
-        document.add_paragraph(summary_text)
-        document.save(output_path)
-        logger.info("DOCX summary saved successfully.")
-    except Exception as e:
-        logger.error(f"Failed to save summary as DOCX: {e}")
-        raise
-
-def generate_audio_summary(script_text: str, output_path: Path):
-    """Generates a two-speaker audio summary (Placeholder)."""
-    logger.info(f"Generating audio summary (TTS Placeholder): {output_path}")
-
-    if settings.summary.tts_engine == "none":
-         logger.warning("TTS engine is set to 'none'. Skipping audio generation.")
-         raise NotImplementedError("TTS is disabled in configuration.")
-
-    # --- === Placeholder for TTS Implementation === ---
-    # This section requires installing and configuring a specific TTS library (like Coqui TTS or Bark).
-    # Installation can be complex (esp. Coqui needs espeak-ng).
-    # Example structure using Coqui TTS (requires `pip install TTS`):
+async def generate_summary(text_content: str, output_format: str = "txt") -> Dict[str, Any]:
     """
-    try:
-        # Ensure speaker IDs from config are valid for the chosen TTS model
-        speaker1 = settings.summary.tts_speaker_1
-        speaker2 = settings.summary.tts_speaker_2
-        if not speaker1 or not speaker2:
-             raise ValueError("TTS speaker IDs not configured.")
-
-        # Load TTS model (consider loading once globally if performance is critical)
-        tts = TTS("tts_models/en/vctk/vits", gpu=False) # Example model
-
-        segments = []
-        full_audio = []
-        current_speaker_audio = []
-        lines = script_text.strip().split('\n\n')
-
-        for line in lines:
-            if not line.strip(): continue
-            if line.startswith("Speaker A:"):
-                speaker = speaker1
-                text = line.replace("Speaker A:", "").strip()
-            elif line.startswith("Speaker B:"):
-                speaker = speaker2
-                text = line.replace("Speaker B:", "").strip()
-            else: # Handle potential formatting issues
-                continue
-
-            logger.debug(f"Synthesizing: [{speaker}] {text}")
-            # Synthesize audio for the line
-            # Note: Coqui TTS API might change. Check their documentation.
-            wav = tts.tts(text=text, speaker=speaker) # This returns a NumPy array
-            # Accumulate audio data (requires numpy and potentially pydub)
-            # Add silence between speakers if needed
-            # current_speaker_audio.append(wav)
-
-        # Combine all synthesized parts into a single audio file
-        # final_wav = combine_audio(current_speaker_audio) # Requires audio manipulation library
-
-        # Save the final audio file
-        # sf.write(str(output_path), final_wav, tts.synthesizer.output_sr) # Save using soundfile
-
-        logger.info(f"Audio summary generated successfully: {output_path}")
-
-    except ImportError:
-        logger.error("TTS library (e.g., Coqui TTS) not installed. Cannot generate audio.")
-        raise NotImplementedError("TTS library not found.")
-    except Exception as e:
-        logger.error(f"Failed to generate audio summary: {e}")
-        raise RuntimeError("Audio summary generation failed.") from e
+    Generates a summary of the given text content using the LLM.
+    Optionally formats the output based on the specified format.
     """
-    # --- === End Placeholder === ---
+    logger.info(f"Generating summary for text content (length: {len(text_content)}) in format: {output_format}")
 
-    # If TTS is not implemented, raise an error or create a dummy file
-    logger.warning("Actual TTS generation is not implemented in this placeholder.")
-    # Create an empty file or a file with a note
-    with open(output_path, "w") as f:
-        f.write("Audio generation placeholder. Implement TTS integration.")
-    raise NotImplementedError("TTS generation not fully implemented.")
+    if not text_content.strip():
+        logger.warning("Attempted to generate summary for empty text content.")
+        return {"summary": "No content to summarize."}
+
+    # Define the prompt for the LLM
+    # You can adjust this prompt based on your desired summary style and length
+    prompt = f"""Summarize the following text.
+
+    <text>
+    {text_content}
+    </text>
+
+    Provide the summary in {output_format} format.
+    Summary:""" # Basic prompt, refine as needed
+
+
+    # You might need to adjust the max tokens or other parameters based on the LLM and desired summary length
+    max_tokens = settings.summary.summary_max_length # Use setting for max length
+
+    try:
+        llm_url = f"{get_llm_url()}/api/generate" # Adjust endpoint if necessary
+        async with httpx.AsyncClient() as client:
+            # Parameters for the Ollama generate API
+            payload = {
+                "prompt": prompt,
+                "stream": False, # Do not stream the response for summary task
+                "options": {
+                    "num_predict": max_tokens, # Limit the length of the summary
+                    # Add other Ollama options as needed (e.g., temperature, top_p)
+                }
+            }
+            logger.debug(f"Sending summary request to LLM: {payload}")
+
+            response = await client.post(llm_url, json=payload, timeout=600) # Increased timeout for summary
+            response.raise_for_status() # Raise an exception for bad status codes
+
+            ollama_response_data = response.json()
+            summary_text = ollama_response_data.get("response", "").strip()
+
+        logger.info(f"LLM summary generation successful. Summary length: {len(summary_text)}")
+
+        # --- Format the summary based on output_format ---
+        formatted_summary = summary_text
+
+        # Basic formatting examples (more sophisticated formatting would be needed for docx, script)
+        if output_format == "script":
+            # Basic script formatting: maybe add speaker labels or scene breaks
+            formatted_summary = f"## Summary Script\n\n{summary_text}" # Simple example
+
+        # Add formatting for other types (docx, audio) here if not handled by LLM directly
+
+        # If output_format is audio, the summary_text should be the text to be spoken
+        # The actual TTS generation happens in the generate_summary_task in tasks.py
+        # This function just returns the text content that *will be* spoken.
+        if output_format == "audio":
+            # For audio, the 'summary' key should contain the text for TTS
+            return {"summary": summary_text, "format": "text_for_tts"} # Indicate it's text for TTS
+
+        # Return the generated and formatted summary
+        return {"summary": formatted_summary, "format": output_format}
+
+
+    except httpx.HTTPStatusError as e:
+        logger.error(f"HTTP error communicating with LLM for summary: {e.response.status_code} - {e.response.text}")
+        return {"summary": f"Error from LLM ({e.response.status_code}): {e.response.text}", "format": "txt"}
+    except httpx.RequestError as e:
+        logger.error(f"Request error communicating with LLM for summary: {e}")
+        return {"summary": f"Error communicating with LLM: {e}", "format": "txt"}
+    except Exception as e:
+        logger.error(f"An unexpected error occurred during summary generation: {e}", exc_info=True)
+        return {"summary": f"An unexpected error occurred during summary generation: {e}", "format": "txt"}
+
+# --- Text-to-Speech (TTS) Function (Placeholder) ---
+# This function would be called by the generate_summary_task if output_format is "audio"
+# It needs to be implemented based on the chosen TTS library/service.
+
+async def generate_audio_from_text(text_content: str, output_path: Path) -> None:
+    """
+    Generates an audio file from text content using a TTS engine. (Placeholder)
+    """
+    logger.info(f"Attempting to generate audio from text (length: {len(text_content)}) to {output_path}")
+    # Ensure the output directory exists
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+
+    # --- TTS Implementation ---
+    # This section needs to be replaced with actual TTS code
+    # based on settings.summary.tts_engine (e.g., Coqui TTS, Bark, etc.)
+
+    tts_engine = settings.summary.tts_engine
+    if tts_engine == "coqui_tts":
+        try:
+            from TTS.api import TTS
+            # Assuming you have a TTS model downloaded
+            # The model_name should come from settings (e.g., settings.summary.tts_model_name)
+            # And speaker settings if applicable (settings.summary.tts_speaker)
+            logger.warning("Coqui TTS generation not fully implemented. Using placeholder.")
+            # Example (requires model download):
+            # tts = TTS(model_name=settings.summary.tts_model_name, progress_bar=False, gpu=False) # Adjust gpu based on available hardware
+            # # Example for a multi-speaker model like VCTK
+            # # speaker = settings.summary.tts_speaker_1 # Get speaker from settings
+            # # tts.tts_to_file(text=text_content, speaker=speaker, file_path=output_path)
+            # # Create a dummy file for now
+            # with open(output_path, 'w') as f:
+            #      f.write("placeholder audio data") # Write some placeholder content
+            # logger.info(f"Placeholder audio file created at {output_path}")
+
+            raise NotImplementedError("Coqui TTS implementation is a placeholder.")
+
+
+        except ImportError:
+            logger.error("Coqui TTS library not found. Install it: pip install TTS")
+            raise ImportError("Coqui TTS library not found.")
+        except Exception as e:
+             logger.error(f"Error during Coqui TTS generation: {e}")
+             raise RuntimeError(f"Coqui TTS generation failed: {e}") from e
+
+    elif tts_engine == "bark":
+         logger.warning("Bark TTS generation not fully implemented.")
+         raise NotImplementedError("Bark TTS implementation is a placeholder.")
+
+    elif tts_engine == "none" or not tts_engine:
+        logger.warning("TTS engine is set to 'none' or not configured. Cannot generate audio.")
+        raise NotImplementedError("TTS engine not configured.")
+
+    else:
+        logger.error(f"Unknown TTS engine specified in settings: {tts_engine}")
+        raise ValueError(f"Unknown TTS engine: {tts_engine}")
+
+    # --- End of TTS Implementation ---
+
+    logger.info(f"Audio generation task finished for {output_path}")

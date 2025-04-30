@@ -2,35 +2,51 @@
 require_once 'includes/api_client.php';
 
 // --- Fetch Initial Data from Backend ---
-// Adjust endpoints based on your actual API structure
-$sources = fetchDataFromApi('/api/sources/') ?? []; // Assuming GET /api/sources/ lists sources
-$chats = fetchDataFromApi('/api/chats/') ?? []; // Assuming GET /api/chats/ lists available chats
-$initialChatData = null;
-$initialMessages = [];
-$currentChatId = null;
 
-// Let's try to load the first chat by default, or handle case with no chats
-if (!empty($chats)) {
-    $currentChatId = $chats[0]['id'] ?? null; // Assuming chat objects have an 'id'
-    if ($currentChatId) {
-        // Fetch details for the first chat
-        $initialChatData = fetchDataFromApi("/api/chats/{$currentChatId}");
-        // Fetch messages for the first chat
-        $initialMessages = fetchDataFromApi("/api/chats/{$currentChatId}/messages/") ?? [];
+// Fetch a list of all chat sessions
+$chatSessions = getChatSessions() ?? []; // Use the new function
+
+$initialChatSessionId = null;
+$initialChatSession = null;
+$initialMessages = [];
+
+// If there are any chat sessions, load the details and messages for the first one
+if (!empty($chatSessions)) {
+    // Assuming sessions are ordered by creation date by default from the backend GET /sessions endpoint
+    // Select the first session to display initially
+    $initialChatSessionId = $chatSessions[0]['id'] ?? null;
+
+    if ($initialChatSessionId) {
+        // Fetch full details for the initial session (including linked documents if the backend returns them)
+        $initialChatSession = getChatSessionDetails($initialChatSessionId);
+
+        // Fetch messages for the initial session
+        $initialMessages = getChatSessionMessages($initialChatSessionId) ?? [];
     }
 }
+
+
+// Fetch a list of all documents to populate the sources sidebar
+// This is needed to show documents and their processing status, and allow selecting for RAG
+$documents = getDocumentsList() ?? [];
+
 
 // Placeholder for Studio data - Define an endpoint in your backend for this
 // e.g., GET /api/studio/overview
 $studioOverview = fetchDataFromApi('/api/studio/overview') ?? [
     'title' => 'Studio',
-    'items' => [],
+    'items' => [], // This should be populated by the backend endpoint
     'notes_placeholder' => 'Notes unavailable.',
-    'quick_links' => []
+    'quick_links' => [] // This should be populated by the backend endpoint
 ];
 
-// Determine Page Title (use chat title if available)
-$pageTitle = $initialChatData['title'] ?? 'BibleLM Interface'; // Assuming chat data has a 'title'
+// Determine Page Title (use the initial chat session title if available)
+$pageTitle = $initialChatSession['title'] ?? 'BibleLM Interface';
+
+// Set environment variables for the frontend JavaScript
+// These will be accessed by main.js
+$backendApiUrl = getenv('BACKEND_API_URL') ?: 'http://172.17.0.1:8000';
+$backendWsUrl = str_replace(['http://', 'https://'], ['ws://', 'wss://'], $backendApiUrl); // Derive WebSocket URL
 
 ?>
 <!DOCTYPE html>
@@ -43,7 +59,7 @@ $pageTitle = $initialChatData['title'] ?? 'BibleLM Interface'; // Assuming chat 
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
-    </head>
+</head>
 <body>
     <div class="app-container">
         <header class="app-header">
@@ -61,74 +77,84 @@ $pageTitle = $initialChatData['title'] ?? 'BibleLM Interface'; // Assuming chat 
             </div>
         </header>
 
-        <div class="main-container" data-current-chat-id="<?php echo htmlspecialchars($currentChatId ?? ''); ?>">
-            <aside class="sidebar sidebar-left">
+        <div class="main-container" data-current-chat-id="<?php echo htmlspecialchars($initialChatSessionId ?? ''); ?>">
+             <aside class="sidebar sidebar-left">
                 <div class="sidebar-header">
                     <h2>Sources</h2>
                     <div class="sidebar-actions">
-                        <button class="button button-small button-secondary">+ Add</button>
+                        <button class="button button-small button-secondary" id="add-source-button">+ Add</button>
                         <button class="button button-small button-secondary">🔍 Discover</button>
                     </div>
                 </div>
                 <div class="source-controls">
                     <label class="checkbox-label">
                         <input type="checkbox" id="select-all-sources">
-                        <span>Select all sources</span>
+                        <span>Select all completed sources for RAG</span>
                     </label>
                 </div>
                 <ul class="source-list scrollable" id="source-list">
-                    <?php if (!empty($sources)): ?>
-                        <?php foreach ($sources as $source): ?>
-                            <li data-source-id="<?php echo htmlspecialchars($source['id']); ?>" tabindex="0">
-                                <img src="assets/placeholder-icon.svg" alt="" class="source-icon">
-                                <span class="source-title"><?php echo htmlspecialchars($source['title'] ?? 'Untitled Source'); ?></span>
-                                <input type="checkbox" class="source-checkbox" aria-label="Select <?php echo htmlspecialchars($source['title'] ?? 'Untitled Source'); ?>">
+                    <li class="empty-list-message">Loading sources...</li>
+                </ul>
+
+                 <div class="sidebar-header">
+                    <h2>Chat Sessions</h2>
+                     <div class="sidebar-actions">
+                        <button class="button button-small button-primary" id="create-chat-button">+ New Chat</button>
+                    </div>
+                </div>
+                 <ul class="chat-session-list scrollable" id="chat-session-list">
+                    <?php if (!empty($chatSessions)): ?>
+                        <?php foreach ($chatSessions as $session): ?>
+                            <li class="chat-session-item <?php echo ($session['id'] ?? null) === $initialChatSessionId ? 'active' : ''; ?>" data-session-id="<?php echo htmlspecialchars($session['id']); ?>" tabindex="0">
+                                <span class="session-title"><?php echo htmlspecialchars($session['title'] ?? 'Untitled Session'); ?></span>
+                                <span class="session-date"><?php echo date('Y-m-d', strtotime($session['created_at'] ?? 'now')); ?></span>
                             </li>
                         <?php endforeach; ?>
                     <?php else: ?>
-                        <li class="empty-list-message">No sources found.</li>
+                         <li class="empty-list-message">No chat sessions yet. Click "+ New Chat" to create one.</li>
                     <?php endif; ?>
                 </ul>
             </aside>
 
+
             <main class="content-center" id="main-content">
-                <?php if ($initialChatData): ?>
-                    <div class="chat-header">
-                        <img src="assets/placeholder-icon.svg" alt="" class="chat-topic-icon">
-                        <h2 id="chat-title"><?php echo htmlspecialchars($initialChatData['title'] ?? 'Chat'); ?></h2>
-                        </div>
-                    <div class="chat-body scrollable" id="chat-body">
-                        <?php foreach ($initialMessages as $message): ?>
-                            <div class="chat-message <?php echo ($message['role'] ?? 'user') === 'assistant' ? 'assistant-message' : 'user-message'; ?>">
-                                <p><?php echo nl2br(htmlspecialchars($message['content'] ?? '')); ?></p>
-                                </div>
-                        <?php endforeach; ?>
-                         <?php if (empty($initialMessages)): ?>
-                             <p class="empty-list-message">Start the conversation!</p>
+                 <div class="chat-header">
+                     <img src="assets/placeholder-icon.svg" alt="" class="chat-topic-icon">
+                     <h2 id="chat-title"><?php echo htmlspecialchars($pageTitle); ?></h2>
+                 </div>
+
+                 <div class="chat-body scrollable" id="chat-body">
+                     <?php if (!empty($initialMessages)): ?>
+                         <?php foreach ($initialMessages as $message): ?>
+                             <div class="chat-message <?php echo ($message['role'] ?? 'user') === 'assistant' ? 'assistant-message' : 'user-message'; ?>">
+                                 <p><?php echo nl2br(htmlspecialchars($message['content'] ?? '')); ?></p>
+                             </div>
+                         <?php endforeach; ?>
+                     <?php else: ?>
+                         <?php if ($initialChatSessionId): ?>
+                             <p class="empty-list-message">This chat session is empty. Start the conversation!</p>
+                         <?php else: ?>
+                             <p class="centered-message">Welcome! Select a chat session from the left or create a new one to get started.</p>
                          <?php endif; ?>
-                    </div>
-                    <div class="chat-actions" id="chat-actions">
-                        <button class="button button-outline">Add note</button>
-                        <button class="button button-outline">Audio Overview</button>
-                        <button class="button button-outline">Mind Map</button>
-                        <button class="button icon-button" aria-label="Save to note" title="Save to note">
-                           <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg>
-                        </button>
-                    </div>
-                    <div class="chat-input-area">
-                        <textarea id="chat-input" placeholder="Start typing..." aria-label="Chat input" rows="1"></textarea>
-                        <button class="button button-primary icon-button" id="send-button" aria-label="Send message" title="Send message">
-                            <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
-                        </button>
-                    </div>
-                <?php else: ?>
-                    <div class="centered-message">
-                        <h2>Welcome!</h2>
-                        <p>Select a chat or create a new one to get started.</p>
-                        <button class="button button-primary" id="create-chat-button">Create New Chat</button>
-                    </div>
-                <?php endif; ?>
-            </main>
+                     <?php endif; ?>
+                 </div>
+
+                 <div class="chat-actions" id="chat-actions">
+                     <button class="button button-outline">Add note</button>
+                     <button class="button button-outline">Audio Overview</button>
+                     <button class="button button-outline">Mind Map</button>
+                     <button class="button icon-button" aria-label="Save to note" title="Save to note">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg>
+                     </button>
+                 </div>
+
+                 <div class="chat-input-area">
+                     <textarea id="chat-input" placeholder="Start typing..." aria-label="Chat input" rows="1"></textarea>
+                     <button class="button button-primary icon-button" id="send-button" aria-label="Send message" title="Send message">
+                         <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
+                     </button>
+                 </div>
+             </main>
 
             <aside class="sidebar sidebar-right">
                 <div class="sidebar-header">
@@ -139,20 +165,26 @@ $pageTitle = $initialChatData['title'] ?? 'BibleLM Interface'; // Assuming chat 
                 </div>
                 <div class="studio-content scrollable">
                     <div class="studio-section">
-                        <h3>Audio Overview</h3> <?php if (!empty($studioOverview['items'])): ?>
-                             <?php foreach($studioOverview['items'] as $item): ?>
-                             <div class="studio-item" data-item-id="<?php echo htmlspecialchars($item['id'] ?? ''); ?>">
-                                 <h4><?php echo htmlspecialchars($item['title'] ?? 'Item'); ?></h4>
-                                 <p><?php echo htmlspecialchars($item['details'] ?? ''); ?></p>
-                                 <div class="studio-item-actions">
-                                     <button class="button button-outline button-small">Customize</button>
-                                     <button class="button button-primary button-small">Generate</button>
-                                 </div>
-                             </div>
-                             <?php endforeach; ?>
-                        <?php else: ?>
-                             <p class="placeholder">No studio items available.</p>
-                        <?php endif; ?>
+                        <h3>Audio Overview</h3>
+                         <?php if (!empty($studioOverview['audio_notes'])): ?> <?php foreach($studioOverview['audio_notes'] as $note): ?>
+                                 <div class="studio-item" data-item-id="<?php echo htmlspecialchars($note['id'] ?? ''); ?>">
+                                     <h4>Audio Note <?php echo htmlspecialchars($note['id'] ?? ''); ?></h4>
+                                     <p><?php echo htmlspecialchars(substr($note['generated_note'] ?? '', 0, 100)) . '...'; ?></p>
+                                     </div>
+                            <?php endforeach; ?>
+                         <?php else: ?>
+                              <p class="placeholder">No audio notes available.</p>
+                         <?php endif; ?>
+
+                         <?php if (!empty($studioOverview['audio_files'])): ?> <?php foreach($studioOverview['audio_files'] as $file): ?>
+                                 <div class="studio-item" data-item-id="<?php echo htmlspecialchars($file['id'] ?? ''); ?>">
+                                     <h4><?php echo htmlspecialchars($file['audio_title'] ?? 'Untitled Audio'); ?></h4>
+                                     <p>Duration: <?php echo htmlspecialchars($file['duration'] ?? 'N/A'); ?>s</p>
+                                     </div>
+                            <?php endforeach; ?>
+                         <?php else: ?>
+                              <p class="placeholder">No audio files available.</p>
+                         <?php endif; ?>
                     </div>
                     <div class="studio-section">
                         <div class="section-header">
@@ -167,7 +199,7 @@ $pageTitle = $initialChatData['title'] ?? 'BibleLM Interface'; // Assuming chat 
                          <h3>Tools</h3>
                          <?php if (!empty($studioOverview['quick_links'])): ?>
                              <?php foreach($studioOverview['quick_links'] as $link): ?>
-                                <button class="button button-link"><?php echo htmlspecialchars($link); ?></button>
+                                 <button class="button button-link"><?php echo htmlspecialchars($link); ?></button>
                              <?php endforeach; ?>
                          <?php else: ?>
                               <p class="placeholder">No tools configured.</p>
@@ -178,6 +210,10 @@ $pageTitle = $initialChatData['title'] ?? 'BibleLM Interface'; // Assuming chat 
         </div>
     </div>
 
+    <script>
+        window.BACKEND_API_URL = '<?php echo $backendApiUrl; ?>';
+        window.BACKEND_WS_URL = '<?php echo $backendWsUrl; ?>';
+    </script>
     <script src="js/main.js"></script>
 </body>
 </html>

@@ -1,127 +1,66 @@
-import enum
 import logging
-from datetime import datetime
-import asyncio
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
-from sqlalchemy.orm import declarative_base, sessionmaker, relationship
-from sqlalchemy import Column, Integer, String, Enum, DateTime, Text, ForeignKey
+from sqlalchemy.orm import sessionmaker
 from sqlalchemy.exc import OperationalError
-from sqlalchemy.sql import func
+
+# Import Base from models.py
+from .models import Base
+# Import enums from constants.py if needed for database logic (not strictly necessary for table creation)
+# from .constants import DocumentStatus, DocumentType, ChatMessageRole
 
 from .config import settings
 
 DATABASE_PATH = settings.full_data_dir / "db" / "app.db"
+# Ensure parent directory exists before creating the database file
+DATABASE_PATH.parent.mkdir(parents=True, exist_ok=True)
 DATABASE_URL = f"sqlite+aiosqlite:///{DATABASE_PATH}"
 
 # --- Logging Setup ---
-logger = logging.getLogger(__name__)  # Get the logger for this module
+logger = logging.getLogger(__name__)
+
+# --- Enums are now in constants.py ---
+
 
 # Use async engine for FastAPI
 try:
-    logger.info(f"Connecting to database with URL: {DATABASE_URL}")  # Log the URL
-    engine = create_async_engine(DATABASE_URL, echo=True)  # echo=True for debugging SQL
+    logger.info(f"Connecting to database with URL: {DATABASE_URL}")
+    # Removed echo=True unless needed for debugging, can be noisy
+    engine = create_async_engine(DATABASE_URL, echo=False)
     AsyncSessionLocal = sessionmaker(
         bind=engine, class_=AsyncSession, expire_on_commit=False
     )
 except Exception as e:
     logger.error(f"Error creating database engine: {e}")
     # It's crucial to handle this error, as the app cannot function without a DB connection.
-    # You might want to raise an exception here to prevent the app from starting.
-    raise  # Re-raise the exception to stop the application startup
-
-Base = declarative_base()
-
-
-class DocumentStatus(enum.Enum):
-    PENDING = "PENDING"
-    DOWNLOADING = "DOWNLOADING"
-    PROCESSING = "PROCESSING"
-    COMPLETED = "COMPLETED"
-    FAILED = "FAILED"
-
-
-class DocumentType(enum.Enum):
-    PDF = "PDF"
-    DOCX = "DOCX"
-    EPUB = "EPUB"
-    TXT = "TXT"
-    MP3 = "MP3"
-    WAV = "WAV"
-    MP4 = "MP4"
-    MOV = "MOV"
-    PNG = "PNG"
-    JPG = "JPG"
-    URL = "URL"
-    UNKNOWN = "UNKNOWN"
-
-class ChatTable(Base):
-    __tablename__ = "chats"
-    id = Column(Integer, primary_key=True, index=True)
-    source_id = Column(Integer, ForeignKey("sources.id"), nullable=True)
-    question = Column(Text)
-    answer = Column(Text)
-    title = Column(String)
-    created_at = Column(DateTime(timezone=True), server_default=func.now())
-    updated_at = Column(DateTime(timezone=True), onupdate=func.now())
-    source = relationship("Source", back_populates="chats")
-
-class Document(Base):
-    __tablename__ = "documents"
-
-    id = Column(Integer, primary_key=True, index=True)
-    filename = Column(String, index=True)
-    original_path = Column(String)  # Path in uploads/ or the source URL
-    processed_text_path = Column(String, nullable=True)  # Path to extracted text file
-    document_type = Column(Enum(DocumentType))
-    status = Column(Enum(DocumentStatus), default=DocumentStatus.PENDING)
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
-    error_message = Column(Text, nullable=True)
-
-class SourceTable(Base):
-    __tablename__ = "sources"
-    id = Column(Integer, primary_key=True, index=True)
-    name = Column(String, unique=True, index=True)
-    description = Column(Text)
-    chats = relationship("Chat", back_populates="source")
-    created_at = Column(DateTime(timezone=True), server_default=func.now())
-    updated_at = Column(DateTime(timezone=True), onupdate=func.now())
-
-class AudioNoteTable(Base):
-    __tablename__ = "audio_notes"
-    
-    id = Column(Integer, primary_key=True, index=True)
-    generated_note = Column(Text, index=True)
-    tool_used = Column(String)
-
-class AudioFileTable(Base):
-    __tablename__ = "audio_files"
-
-    id = Column(Integer, primary_key=True, index=True)
-    audio_title = Column(String)
-    file_path = Column(String)
-    duration = Column(Integer)
-    created_at = Column(DateTime(timezone=True), server_default=func.now())
-    updated_at = Column(DateTime(timezone=True), onupdate=func.now())
-
-async def init_db():
-    """
-    Initialize the database: create tables.
-    """
-    try:
-        async with engine.begin() as conn:
-            await conn.run_sync(
-                Base.metadata.create_all
-            )  # Corrected: create_all, not drop_all
-        logger.info("Database tables created successfully.")
-    except OperationalError as e:
-        logger.error(f"OperationalError during database initialization: {e}")
-        raise  # Re-raise to stop startup
-    except Exception as e:
-        logger.error(f"Error initializing database: {e}")
-        raise  # Re-raise to stop startup
+    # Raise the exception here to prevent the app from starting if the database fails.
+    raise
 
 # Dependency to get DB session in routes
 async def get_db():
+    """Provides an asynchronous database session."""
+    logger.debug("Getting DB session...")
     async with AsyncSessionLocal() as session:
         yield session
+    logger.debug("DB session closed.")
+
+
+async def init_db():
+    """
+    Initialize the database: create tables if they don't exist.
+    """
+    logger.info("Attempting to initialize database tables...")
+    try:
+        async with engine.begin() as conn:
+            logger.info("Running Base.metadata.create_all...")
+            # This will create all tables defined in models.py that inherit from Base
+            # only if they do not already exist in the database.
+            await conn.run_sync(Base.metadata.create_all)
+            logger.info("Base.metadata.create_all finished.")
+        logger.info("Database tables created or already exist.")
+    except OperationalError as e:
+        logger.error(f"OperationalError during database initialization: {e}")
+        # Re-raise to stop startup if migration/creation fails
+        raise
+    except Exception as e:
+        logger.error(f"Error initializing database: {e}")
+        raise

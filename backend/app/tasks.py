@@ -1,155 +1,220 @@
-import logging
-from pathlib import Path
 import asyncio
+import logging
+import httpx
 from sqlalchemy.ext.asyncio import AsyncSession
+from pathlib import Path
+import os
+import shutil
 
-from .config import settings
-from .database import Document, DocumentStatus, DocumentType
-from . import crud
-from .utils import file_processor, downloader, rag_handler, summarizer
-from .schemas import SummaryRequest
+# Import get_db from database.py for session management in tasks
+from .database import get_db
+# Import Document model from models.py
+from .models import Document
+# Import Enums from constants.py
+from .constants import DocumentStatus, DocumentType
+from .utils import file_processor, summarizer, rag_handler
+from .config import settings # Import settings
 
 logger = logging.getLogger(__name__)
 
-# --- Ingestion Task ---
-
 async def process_document_task(db: AsyncSession, doc_id: int):
-    """The main background task for processing a single document."""
-    logger.info(f"Starting background processing for document ID: {doc_id}")
-    doc = await crud.get_document(db, doc_id)
+    """
+    Background task to process an uploaded or ingested document.
+    Includes: downloading (if URL), text extraction, chunking, and embedding.
+    """
+    logger.info(f"Starting processing for document ID: {doc_id}")
+    doc = await crud.get_document(db, doc_id) # Use await with async crud function
     if not doc:
-        logger.error(f"Document ID {doc_id} not found in database for processing.")
+        logger.error(f"Document with ID {doc_id} not found for processing.")
+        # The broadcast_status will handle sending NOT_FOUND if called from main.py
         return
 
+    # Use the status enum member directly
+    await crud.update_document_status(db, doc_id, DocumentStatus.PROCESSING)
+
     try:
-        # 1. Update status to PROCESSING
-        await crud.update_document_status(db, doc_id, DocumentStatus.PROCESSING)
+        original_path = Path(doc.original_path)
+        processed_path = None # Initialize processed_path
 
-        # 2. Determine source path (uploaded file or URL)
-        source_path_str = doc.original_path
-        is_url = doc.document_type == DocumentType.URL
-        file_to_process = None
+        # 1. Download the document if it's a URL
+        if doc.document_type == DocumentType.URL:
+            logger.info(f"Document {doc_id} is a URL, attempting download: {doc.original_path}")
+            await crud.update_document_status(db, doc_id, DocumentStatus.DOWNLOADING) # Update status
+            try:
+                 # downloader.download_url is assumed to be async or run in executor
+                 # Ensure downloader.download_url is defined and correctly handles paths
+                 # Assuming downloader.download_url saves to uploads_dir and returns the path
+                 downloaded_path = await file_processor.download_url(doc.original_path, settings.uploads_dir)
+                 original_path = Path(downloaded_path) # Use the downloaded file path
+                 logger.info(f"Downloaded URL {doc_id} to: {original_path}")
+                 await crud.update_document_status(db, doc_id, DocumentStatus.PROCESSING) # Back to processing after download
 
-        if is_url:
-            logger.info(f"Document {doc_id} is a URL, attempting download...")
-            await crud.update_document_status(db, doc_id, DocumentStatus.DOWNLOADING)
-            downloaded_path = downloader.download_media(source_path_str, settings.uploads_dir)
-            if downloaded_path:
-                file_to_process = downloaded_path
-                # Update doc record with actual filename and type after download
-                doc.filename = file_to_process.name
-                doc.document_type = file_processor.get_document_type(file_to_process)
-                doc.original_path = str(file_to_process) # Store the path to the downloaded file now
-                await crud.update_document_status(db, doc_id, DocumentStatus.PROCESSING) # Back to processing
-                await db.commit() # Save changes
-                await db.refresh(doc)
-            else:
-                raise ValueError(f"Failed to download media from URL: {source_path_str}")
+            except Exception as e:
+                 logger.error(f"Failed to download URL {doc_id}: {e}")
+                 await crud.update_document_status(db, doc_id, DocumentStatus.FAILED, error_message=f"Download failed: {e}")
+                 return # Stop processing if download fails
+
+
+        # 2. Extract text based on document type
+        logger.info(f"Extracting text for document {doc_id} ({doc.document_type.name}) from {original_path}")
+        try:
+            # file_processor.extract_text is assumed to handle various types and be async or run in executor
+            # It should return the path to the processed text file (e.g., in processed_dir)
+            extracted_text_path = await file_processor.extract_text(original_path, doc.document_type, settings.processed_dir)
+            processed_path = Path(extracted_text_path)
+            logger.info(f"Text extracted for document {doc_id} to: {processed_path}")
+            await crud.update_document_processed_path(db, doc_id, str(processed_path)) # Update DB with processed path
+
+        except Exception as e:
+            logger.error(f"Failed to extract text for document {doc_id}: {e}")
+            await crud.update_document_status(db, doc_id, DocumentStatus.FAILED, error_message=f"Text extraction failed: {e}")
+            return # Stop processing if extraction fails
+
+
+        # 3. Chunk and Embed the text
+        if processed_path and processed_path.exists():
+            logger.info(f"Chunking and embedding text for document {doc_id} from {processed_path}")
+            try:
+                # rag_handler.add_document_to_vector_store should read the text, chunk, and embed
+                # It needs the document ID to associate chunks with the source document
+                await rag_handler.add_document_to_vector_store(processed_path, doc_id=doc_id)
+                logger.info(f"Chunking and embedding completed for document {doc_id}.")
+                await crud.update_document_status(db, doc_id, DocumentStatus.COMPLETED) # Mark as completed
+
+            except Exception as e:
+                logger.error(f"Failed to chunk and embed document {doc_id}: {e}")
+                await crud.update_document_status(db, doc_id, DocumentStatus.FAILED, error_message=f"Embedding failed: {e}")
+                return # Stop processing if embedding fails
         else:
-            file_to_process = Path(source_path_str) # Path in uploads dir
+             logger.error(f"Processed text file not found for document {doc_id} at {processed_path}")
+             await crud.update_document_status(db, doc_id, DocumentStatus.FAILED, error_message="Processed text file not found.")
+             return
 
-        if not file_to_process or not file_to_process.exists():
-             raise FileNotFoundError(f"Source file not found for processing: {file_to_process}")
-
-        # 3. Extract Text (handles transcription/OCR internally)
-        logger.info(f"Extracting text from {file_to_process} (Type: {doc.document_type.name})")
-        extracted_text = file_processor.extract_text_from_file(file_to_process, doc.document_type)
-
-        if not extracted_text.strip():
-            logger.warning(f"No text extracted from document {doc_id}. Marking as completed (empty).")
-            await crud.update_document_status(db, doc_id, DocumentStatus.COMPLETED)
-            await crud.update_document_processed_path(db, doc_id, "") # Indicate no text path needed
-            return # Nothing more to do
-
-        # 4. Save Extracted Text
-        processed_text_filename = f"{doc_id}_{doc.filename}.txt"
-        processed_text_path = settings.processed_dir / processed_text_filename
-        with open(processed_text_path, "w", encoding='utf-8') as f:
-            f.write(extracted_text)
-        logger.info(f"Saved extracted text to: {processed_text_path}")
-        await crud.update_document_processed_path(db, doc_id, str(processed_text_path))
-
-        # 5. Add to Vector Store (RAG)
-        metadata = {"source_filename": doc.filename, "original_path": doc.original_path}
-        # Run synchronous RAG indexing in executor
-        loop = asyncio.get_running_loop()
-        await loop.run_in_executor(None, rag_handler.add_text_to_vector_store, extracted_text, metadata, doc_id)
-        # rag_handler.add_text_to_vector_store(extracted_text, metadata, doc_id) # Sync version
-
-        # 6. Mark as Completed
-        await crud.update_document_status(db, doc_id, DocumentStatus.COMPLETED)
-        logger.info(f"Successfully processed document ID: {doc_id}")
 
     except Exception as e:
-        logger.exception(f"Error processing document ID {doc_id}: {e}", exc_info=True)
-        await crud.update_document_status(db, doc_id, DocumentStatus.FAILED, error_message=str(e))
+        # Catch any other unexpected errors during processing
+        logger.error(f"An unexpected error occurred during processing for document {doc_id}: {e}", exc_info=True)
+        await crud.update_document_status(db, doc_id, DocumentStatus.FAILED, error_message=f"Unexpected error during processing: {e}")
 
-# --- Summary Task ---
+    logger.info(f"Finished processing for document ID: {doc_id}")
+    # The status is updated at various stages and finally marked COMPLETED or FAILED
 
-async def generate_summary_task(db: AsyncSession, request_data: dict):
-    """Background task for generating summaries (especially audio)."""
-    # Reconstruct Pydantic model or pass necessary data in dict
-    request = schemas.SummaryRequest(**request_data)
-    doc_ids = request.document_ids
-    output_format = request.format
-    # Create a unique ID for this summary task if needed, or use first doc ID
-    task_id = f"summary_{doc_ids[0]}_{output_format}" if doc_ids else "summary_unknown"
-    logger.info(f"Starting summary generation task ({task_id}): Format={output_format}, Docs={doc_ids}")
 
+async def generate_summary_task(db: AsyncSession, summary_request_data: dict):
+    """
+    Background task to generate a summary for selected documents.
+    Handles different output formats (txt, docx, script, audio).
+    """
+    # Reconstruct Pydantic model from dict if needed, or just use the dict
+    # request = schemas.SummaryRequest(**summary_request_data) # Example if reconstructing
+
+    doc_ids = summary_request_data.get('document_ids', [])
+    output_format = summary_request_data.get('format', 'txt')
+    logger.info(f"Starting summary generation task for docs: {doc_ids}, format: {output_format}")
+
+    if not doc_ids:
+        logger.warning("Summary task called with no document IDs.")
+        # You might need to update a status somewhere if this was triggered by a UI element
+        return
+
+    # Fetch the content from the processed text files of the selected documents
     try:
-        docs_to_summarize = await crud.get_completed_documents_by_ids(db, doc_ids)
-        if not docs_to_summarize:
-            raise ValueError("No completed documents found for summarization.")
+        # Use crud function to get completed documents by IDs
+        completed_docs = await crud.get_completed_documents_by_ids(db, doc_ids)
+        if not completed_docs:
+             logger.error(f"None of the specified documents {doc_ids} are completed for summarization.")
+             # Update relevant document statuses or a dedicated summary task status
+             for doc_id in doc_ids:
+                 await crud.update_document_status(db, doc_id, DocumentStatus.FAILED, error_message="Document not ready for summary")
+             return
 
-        full_text = ""
-        for doc in docs_to_summarize:
+        # Concatenate text content from completed documents
+        all_text = ""
+        for doc in completed_docs:
             if doc.processed_text_path and Path(doc.processed_text_path).exists():
-                with open(doc.processed_text_path, 'r', encoding='utf-8') as f:
-                    full_text += f.read() + "\n\n"
-            else:
-                 logger.warning(f"Skipping doc {doc.id} in summary: processed text not found at {doc.processed_text_path}")
+                try:
+                    with open(doc.processed_text_path, 'r', encoding='utf-8') as f:
+                        all_text += f.read() + "\n\n" # Add separator between documents
+                except Exception as e:
+                     logger.error(f"Error reading processed text for document {doc.id}: {e}")
+                     # Decide how to handle: skip doc, fail task
+                     continue # Skip this document's text
 
 
-        if not full_text.strip():
-             raise ValueError("No text content available in the selected documents to generate summary.")
+        if not all_text.strip():
+            logger.error("No valid text content found for summarization.")
+            # Update relevant document statuses or a dedicated summary task status
+            for doc_id in doc_ids:
+                 await crud.update_document_status(db, doc_id, DocumentStatus.FAILED, error_message="No text content found for summary")
+            return
 
-        # Use LangChain documents for summarizer chain
-        langchain_docs = [LangchainDocument(page_content=full_text)] # Treat combined text as one doc for now
-        # Or re-chunk if necessary: langchain_docs = rag_handler.chunk_text(full_text)
+        # Generate the summary using the summarizer utility
+        logger.info(f"Generating summary (format: {output_format}) using LLM...")
+        try:
+            # Assuming summarizer.generate_summary handles calling the LLM
+            # Pass the concatenated text and desired format
+            summary_result = await summarizer.generate_summary(all_text, output_format=output_format)
+            generated_content = summary_result.get('summary') # Assuming it returns a dict with 'summary' or similar
 
-        summary_text = await summarizer.generate_text_summary(langchain_docs)
+            if not generated_content:
+                 raise ValueError("Summarizer returned empty content.")
 
-        # Define output filename base
-        base_filename = f"summary_{'_'.join(map(str, doc_ids))}"
-        output_file = None
+            logger.info(f"Summary generation complete. Content length: {len(generated_content)}")
 
-        if output_format == "txt":
-            output_path = settings.audio_exports_dir / f"{base_filename}.txt" # Save text also in exports? Or just return?
-            with open(output_path, "w", encoding='utf-8') as f:
-                f.write(summary_text)
-            output_file = output_path
-        elif output_format == "docx":
-            output_path = settings.audio_exports_dir / f"{base_filename}.docx"
-            summarizer.save_summary_docx(summary_text, output_path)
-            output_file = output_path
-        elif output_format == "script":
-            script_text = summarizer.create_script(summary_text)
-            output_path = settings.audio_exports_dir / f"{base_filename}_script.txt"
-            with open(output_path, "w", encoding='utf-8') as f:
-                f.write(script_text)
-            output_file = output_path
-        elif output_format == "audio":
-            script_text = summarizer.create_script(summary_text) # Generate script first
-            output_path = settings.audio_exports_dir / f"{base_filename}.mp3"
-            # Run sync TTS generation in executor
-            loop = asyncio.get_running_loop()
-            await loop.run_in_executor(None, summarizer.generate_audio_summary, script_text, output_path)
-            # summarizer.generate_audio_summary(script_text, output_path) # Sync version
-            output_file = output_path
+            # --- Save the generated summary based on format ---
+            base_filename = f"summary_{'_'.join(map(str, doc_ids))}"
+            output_path = settings.audio_exports_dir # Assuming summaries are saved in audio_exports_dir
 
-        logger.info(f"Summary task ({task_id}) completed. Output: {output_file}")
-        # How to notify user? Could update a 'summary_tasks' table, or use websockets/polling on frontend.
+            if output_format == "txt" or output_format == "script":
+                # Save as a .txt file
+                filename = f"{base_filename}.txt"
+                full_output_path = output_path / filename
+                with open(full_output_path, 'w', encoding='utf-8') as f:
+                    f.write(generated_content)
+                logger.info(f"Text summary saved to: {full_output_path}")
+                # Optionally, update document statuses to indicate summary availability
+                # For example, add a flag or status specific to summary generated.
+
+            elif output_format == "docx":
+                 # Assuming summarizer has a function to generate docx or you do it here
+                 # This would require a library like python-docx
+                 logger.warning("DOCX summary generation not fully implemented. Saving as .txt.")
+                 # Fallback to saving as .txt for now
+                 filename = f"{base_filename}.txt"
+                 full_output_path = output_path / filename
+                 with open(full_output_path, 'w', encoding='utf-8') as f:
+                     f.write(generated_content)
+                 # TODO: Implement actual DOCX generation
+
+            elif output_format == "audio":
+                 # Assuming summarizer has a function for TTS or you do it here
+                 # This would require a TTS library like Coqui TTS, Bark, or calling a service
+                 logger.warning("Audio summary generation not fully implemented.")
+                 # TODO: Implement actual audio generation
+                 # You would save an audio file (e.g., .mp3) to output_path
+                 # And potentially create an AudioFile database entry
+                 # filename = f"{base_filename}.mp3"
+                 # full_output_path = output_path / filename
+                 # ... TTS generation code ...
+                 pass # Placeholder for audio generation
+
+            # For audio, you might need a separate mechanism to notify the frontend
+            # when the file is ready for download, potentially using the WebSocket
+            # or updating an AudioFile entry status in the DB.
+
+
+        except Exception as e:
+            logger.error(f"Failed during summary generation or saving: {e}")
+            # Update relevant document statuses or a dedicated summary task status
+            for doc_id in doc_ids:
+                 await crud.update_document_status(db, doc_id, DocumentStatus.FAILED, error_message="Summary generation failed")
+
 
     except Exception as e:
-        logger.exception(f"Error generating summary ({task_id}): {e}", exc_info=True)
-        # Log error, potentially update a status for the summary task if tracked separately
+        logger.error(f"An unexpected error occurred during summary task for docs {doc_ids}: {e}", exc_info=True)
+        # Update relevant document statuses or a dedicated summary task status
+        for doc_id in doc_ids:
+            await crud.update_document_status(db, doc_id, DocumentStatus.FAILED, error_message=f"Unexpected error in summary task: {e}")
+
+    logger.info(f"Finished summary generation task for docs: {doc_ids}")
+    # Status updates (e.g., SUMMARY_COMPLETED) would ideally be handled via WS or DB flags
